@@ -13,6 +13,7 @@ class LstmEnc(object):
     def __init__(self, input, emb_mat, emb_dim, hidden_dim, init='uniform', inner_init='orthonormal',
                  inner_activation=T.nnet.hard_sigmoid, activation=T.tanh,
                  params=None):
+        input = input.dimshuffle(1, 0)
         if params is None:
             self.emb = theano.shared(value=np.asarray(emb_mat, dtype=theano.config.floatX),
                                      name='emb', borrow=True)
@@ -74,7 +75,8 @@ class LstmEnc(object):
         [_, h], _ = theano.scan(
             fn=recurrence,
             sequences=input,
-            outputs_info=[self.c0, self.h0]
+            outputs_info=[T.alloc(self.c0, input.shape[1], hidden_dim),
+                          T.alloc(self.h0, input.shape[1], hidden_dim)]
         )
 
         # 'hidden state + prediction' at last time-step need to be passed to the decoder;
@@ -170,8 +172,8 @@ class BiLstmEnc(object):
                        self.Wb_c, self.Ub_c, self.bb_c,
                        self.Wb_o, self.Ub_o, self.bb_o]
 
-        input_f = input
-        input_b = input[::-1]
+        input_f = input.dimshuffle(1, 0)
+        input_b = input[::-1].dimshuffle(1, 0)
 
         # forward lstm
         def recurrence_f(xf_t, cf_tm, hf_tm):
@@ -191,7 +193,8 @@ class BiLstmEnc(object):
         [_, h_f], _ = theano.scan(
             fn=recurrence_f,
             sequences=input_f,
-            outputs_info=[self.cf, self.hf]
+            outputs_info=[T.alloc(self.cf, input_f.shape[1], hidden_dim),
+                          T.alloc(self.hf, input_f.shape[1], hidden_dim)]
         )
 
         # backward lstm
@@ -212,7 +215,8 @@ class BiLstmEnc(object):
         [_, h_b], _ = theano.scan(
             fn=recurrence_b,
             sequences=input_b,
-            outputs_info=[self.cb, self.hb]
+            outputs_info=[T.alloc(self.cb, input_b.shape[1], hidden_dim),
+                          T.alloc(self.hb, input_b.shape[1], hidden_dim)]
         )
 
         if merge_mode == 'sum':

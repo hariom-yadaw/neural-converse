@@ -12,6 +12,7 @@ __author__ = 'uyaseen'
 class RnnEnc(object):
     def __init__(self, input, emb_mat, emb_dim, hidden_dim, init='uniform', inner_init='orthonormal',
                  activation=T.tanh, params=None):
+        input = input.dimshuffle(1, 0)
         if params is None:
             self.emb = theano.shared(value=np.asarray(emb_mat, dtype=theano.config.floatX),
                                      name='emb', borrow=True)
@@ -37,7 +38,7 @@ class RnnEnc(object):
         h, _ = theano.scan(
             fn=recurrence,
             sequences=input,
-            outputs_info=self.h0
+            outputs_info=T.alloc(self.h0, input.shape[1], hidden_dim)
         )
 
         # 'hidden state + prediction' at last time-step need to be passed to the decoder;
@@ -75,8 +76,8 @@ class BiRnnEnc(object):
                        self.W_f, self.U_f, self.b_f,
                        self.W_b, self.U_b, self.b_b]
 
-        input_f = input
-        input_b = input[::-1]
+        input_f = input.dimshuffle(1, 0)
+        input_b = input[::-1].dimshuffle(1, 0)
 
         # forward rnn
         def recurrence_f(xf_t, hf_tm):
@@ -87,7 +88,7 @@ class BiRnnEnc(object):
         h_f, _ = theano.scan(
             fn=recurrence_f,
             sequences=input_f,
-            outputs_info=self.hf
+            outputs_info=T.alloc(self.hf, input_f.shape[1], hidden_dim)
         )
 
         # backward rnn
@@ -99,7 +100,7 @@ class BiRnnEnc(object):
         h_b, _ = theano.scan(
             fn=recurrence_b,
             sequences=input_b,
-            outputs_info=self.hb
+            outputs_info=T.alloc(self.hb, input_b.shape[1], hidden_dim)
         )
 
         if merge_mode == 'sum':

@@ -4,18 +4,9 @@ import cPickle as pkl
 import codecs
 import ast
 
-from utils import shuffle_pair, shuffle_list, tokenize, remove_symbols
+from utils import shuffle_four, shuffle_list, tokenize, remove_symbols
 
 __author__ = 'uyaseen'
-
-
-def load_data(path):
-    assert os.path.isfile(path), True
-    curr_dir = os.getcwd()
-    with open(path, 'rb') as f:
-        dump = pkl.load(f)
-    os.chdir(curr_dir)
-    return dump
 
 
 # 'dataset_size' can be used to adjust the '#' of conversations; (helpful for training large datasets)
@@ -32,8 +23,11 @@ def pickle_cornell(b_path='data/cornell movie-dialogs corpus/', mv_lines='movie_
     conversation_mapping = []  # only two conversations (this is 'x', 'y' pair)
     dialogue_x = []
     dialogue_y = []
+    mask_x = []
+    mask_y = []
     eos_token = 'EOS'
     unknown_token = 'UNKNOWN_TOKEN'
+    pad_token = 'PADDING'
     curr_dir = os.getcwd()
     print('... -> %s' % mv_lines)
     with codecs.open(b_path + mv_lines, 'r', encoding='us-ascii', errors='ignore') as f:
@@ -64,10 +58,15 @@ def pickle_cornell(b_path='data/cornell movie-dialogs corpus/', mv_lines='movie_
             vocab.add(response)
     vocab.add(unknown_token)
     vocab.add(eos_token)
-    words_to_ix = {wd: i for i, wd in enumerate(vocab)}
-    ix_to_words = {i: wd for i, wd in enumerate(vocab)}
+    words_to_ix = {wd: i+1 for i, wd in enumerate(vocab)}
+    ix_to_words = {i+1: wd for i, wd in enumerate(vocab)}
+    # enforce 'PADDING' index to be 0
+    words_to_ix.update({pad_token: 0})
+    ix_to_words.update({0: pad_token})
+    vocab.add(pad_token)
     print('... vocabulary size: %i' % len(vocab))
 
+    max_len = -1
     for converse in conversation_mapping:
         x = tokenize(remove_symbols(movie_lines[converse[0]]) + ' ' + eos_token)
         y = tokenize(remove_symbols(movie_lines[converse[1]]) + ' ' + eos_token)
@@ -77,26 +76,48 @@ def pickle_cornell(b_path='data/cornell movie-dialogs corpus/', mv_lines='movie_
              for wd in y]
         dialogue_x.append(x)
         dialogue_y.append(y)
+        max_len = len(x) if len(x) > max_len else max_len
+        max_len = len(y) if len(y) > max_len else max_len
+
+    # (left) pad the sequences
+    pad_idx = words_to_ix[pad_token]
+    assert pad_idx == 0
+    N = len(dialogue_x)
+    for idx in xrange(N):
+        mask_x.append([0] * (max_len - len(dialogue_x[idx])) + [1] * len(dialogue_x[idx]))
+        dialogue_x[idx] = [pad_idx] * (max_len - len(dialogue_x[idx])) + dialogue_x[idx]
+        mask_y.append([0] * (max_len - len(dialogue_y[idx])) + [1] * len(dialogue_y[idx]))
+        dialogue_y[idx] = [pad_idx] * (max_len - len(dialogue_y[idx])) + dialogue_y[idx]
 
     # split data into train, validation & test set
-    dialogue_x, dialogue_y = shuffle_pair(dialogue_x, dialogue_y)
+    dialogue_x, mask_x, dialogue_y, mask_y = shuffle_four(dialogue_x, mask_x, dialogue_y, mask_y)
     # test/train split
     te_idx = int(len(dialogue_x) * te_split)
     test_x = dialogue_x[0: te_idx]
+    test_x_mask = mask_x[0: te_idx]
     test_y = dialogue_y[0: te_idx]
+    test_y_mask = mask_y[0: te_idx]
     train_x = dialogue_x[te_idx:]
+    train_x_mask = mask_x[te_idx:]
     train_y = dialogue_y[te_idx:]
+    train_y_mask = mask_y[te_idx:]
     # validation split
     va_idx = int(len(train_x) * va_split)
-    train_x, train_y = shuffle_pair(train_x, train_y)
+    train_x, train_x_mask, train_y, train_y_mask = shuffle_four(train_x, train_x_mask, train_y, train_y_mask)
     valid_x = train_x[0: va_idx]
+    valid_x_mask = train_x_mask[0: va_idx]
     valid_y = train_y[0: va_idx]
+    valid_y_mask = train_y_mask[0: va_idx]
     del train_x[0: va_idx]
+    del train_x_mask[0: va_idx]
     del train_y[0: va_idx]
-
+    del train_y_mask[0: va_idx]
+    print('... max_len: %d' % max_len)
     print('... creating persistence storage')
     vocabulary = [vocab, words_to_ix, ix_to_words]
-    data = [(train_x, train_y), (valid_x, valid_y), (test_x, test_y)]
+    data = [(train_x, train_x_mask, train_y, train_y_mask),
+            (valid_x, valid_x_mask, valid_y, valid_y_mask),
+            (test_x, test_x_mask, test_y, test_y_mask)]
     dump = [vocabulary, data]
     w_path = b_path + 'dataset.pkl'
     with open(w_path, 'wb') as f:

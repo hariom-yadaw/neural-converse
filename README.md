@@ -39,4 +39,4 @@ python chat.py
 ```
 
 ### Note
-This version of `seq2seq` performs gradient update on seeing single training example i.e batch size is 1. Frequent gradient updates without relying on too much (enough) evidence can make the model unstable, also this implementation cannot take advantage of cpu/gpu parallelism, however, this way code is very convenient to comprehend. Please check the [latest version](https://github.com/uyaseen/neural-converse) of this repository for more robust implementation.
+If you are interested in minimal code, then browse to an [older version](https://github.com/uyaseen/neural-converse/tree/9e6d8dd81d8e16315df5903b86759b77bf3df169) of this repository.

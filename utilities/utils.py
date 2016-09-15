@@ -24,3 +24,10 @@ def shuffle_pair(x, y):
 # shuffle a single list
 def shuffle_list(x):
     random.shuffle(x)
+
+
+def shuffle_four(a, b, c, d):
+    data = zip(a, b, c, d)
+    random.shuffle(data)
+    a, b, c, d = zip(*data)
+    return list(a), list(b), list(c), list(d)

@@ -11,11 +11,13 @@ __author__ = 'uyaseen'
 
 
 class RnnDec(object):
-    def __init__(self, enc_h, seq_len, emb_mat, vocab_size, emb_dim, hidden_dim, eos_token,
-                 init='uniform', inner_init='orthonormal', activation=T.tanh, params=None,
-                 max_response=100):
+    def __init__(self, enc_h, mask, emb_mat, vocab_size, emb_dim, hidden_dim, eos_token,
+                 batch_size, max_len, init='uniform', inner_init='orthonormal',
+                 activation=T.tanh, params=None, max_response=100):
         self.enc_h = enc_h
+        self.mask = mask
         self.eos_token = eos_token
+        self.batch_size = batch_size
         self.activation = activation
         self.max_response = max_response
         if params is None:
@@ -50,32 +52,47 @@ class RnnDec(object):
 
         self.h0 = theano.shared(value=get(identifier='zero', shape=(hidden_dim, )), name='h0', borrow=True)
         # y(t-1) from encoder will always be 'eos' token
-        self.y0 = theano.shared(value=self.eos_token, name='y0', borrow=True)
+        self.y0 = theano.shared(value=np.asarray(np.full((batch_size, ),
+                                                         self.eos_token), dtype='int32'), name='y0', borrow=True)
 
         # remember for decoder both h_t and y_t are conditioned on 'enc_h' & 'y_t-1'.
-        def recurrence(h_tm_prev, y_tm_prev):
+        def recurrence(msk, h_tm_prev, y_tm_prev):
             h_t = self.activation(T.dot(self.emb[y_tm_prev], self.W) +
                                   T.dot(h_tm_prev, self.U) +
                                   T.dot(self.enc_h, self.c_h) + self.bh)
             # needed to back-propagate errors
-            y_d = T.nnet.softmax(T.dot(h_t, self.V) +
-                                 T.dot(self.enc_h, self.c_y) +
-                                 T.dot(self.emb[y_tm_prev], self.y_t1) +
-                                 self.by)[0]
-            y_t = T.argmax(y_d)
-            return h_t, y_d, y_t
+            y_d_t = T.dot(h_t, self.V) + T.dot(self.enc_h, self.c_y) + T.dot(self.emb[y_tm_prev], self.y_t1) + self.by
+            # ignore padded tokens
+            y_d_t = T.batched_dot(y_d_t, msk)
+            y_d = T.clip(T.nnet.softmax(y_d_t),
+                         0.0001, 0.9999)
+            y_t = T.argmax(y_d, axis=1)
+            return h_t, y_d, T.cast(y_t.flatten(), 'int32')
 
         [_, y_dist, y], _ = theano.scan(
             fn=recurrence,
-            outputs_info=[self.h0, None, self.y0],
-            n_steps=seq_len
+            sequences=mask.dimshuffle(1, 0),  # ugly, but we have to go till the end
+            outputs_info=[T.alloc(self.h0, self.enc_h.shape[0], hidden_dim),
+                          None,
+                          T.alloc(self.y0, self.enc_h.shape[0])],
+            n_steps=max_len
         )
 
-        self.y = y
-        self.y_dist = y_dist
+        self.y = y.dimshuffle(1, 0)
+        self.y_dist = y_dist.dimshuffle(1, 0, 2)
 
     def negative_log_likelihood(self, y):
-        return T.sum(T.nnet.categorical_crossentropy(self.y_dist, y))
+
+        def compute_cost(y_dist, target):
+            return T.nnet.categorical_crossentropy(y_dist, target)
+
+        batched_cost, _ = theano.scan(
+            fn=compute_cost,
+            sequences=[self.y_dist, y],
+            outputs_info=None
+        )
+
+        return T.mean(T.sum(batched_cost, axis=1))  # naive normalization
 
     '''
     Since for generating responses from the decoder at 'test time', we do not know the sequence length;
@@ -83,13 +100,15 @@ class RnnDec(object):
     '''
     def sample(self):
 
+        y0 = theano.shared(value=self.eos_token)
+
         def step(h_tm_prev, y_tm_prev):
             h_t = self.activation(T.dot(self.emb[y_tm_prev], self.W) +
                                   T.dot(h_tm_prev, self.U) +
-                                  T.dot(self.enc_h, self.c_h) + self.bh)
+                                  T.dot(self.enc_h[-1], self.c_h) + self.bh)
             # needed to back-propagate errors
             y_dist = T.nnet.softmax(T.dot(h_t, self.V) +
-                                    T.dot(self.enc_h, self.c_y) +
+                                    T.dot(self.enc_h[-1], self.c_y) +
                                     T.dot(self.emb[y_tm_prev], self.y_t1) +
                                     self.by)[0]
             y_t = T.argmax(y_dist)
@@ -97,7 +116,7 @@ class RnnDec(object):
 
         [_, y], _ = theano.scan(
             fn=step,
-            outputs_info=[self.h0, self.y0],
+            outputs_info=[self.h0, y0],
             n_steps=self.max_response
         )
 
