@@ -11,7 +11,6 @@ grad_clip = 5.
 def adam(cost, params, lr=0.001, b1=0.9, b2=0.999, e=1e-8):
     updates = []
     grads = T.grad(cost, params)
-    # i = theano.shared(theano.config.floatX(0.))
     i = theano.shared(np.dtype(theano.config.floatX).type(1))
     i_t = i + 1.
     fix1 = 1. - (1. - b1)**i_t
